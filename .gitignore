@@ -25,7 +25,7 @@ MANIFEST
 venv/
 env/
 ENV/
-.env
+backend/venv/
 
 # IDEs
 .vscode/
@@ -33,3 +33,6 @@ ENV/
 
 # Local Data
 backend/data/
+
+# Environment
+.env

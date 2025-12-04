@@ -1,12 +1,23 @@
-from fastapi import APIRouter, Depends
-# from src.models.schemas import QueryRequest, QueryResponse
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from typing import List
+from src.api.dependencies import get_query_service
+from src.services.query_service import QueryService
 
 router = APIRouter(prefix="/query", tags=["Query"])
 
-# TODO: Inject QueryService dependency
+class QueryRequest(BaseModel):
+    query: str
 
-@router.post("/")
-async def query_documents():
+class QueryResponse(BaseModel):
+    response: str
+    sources: List[str] = []
+
+@router.post("/", response_model=QueryResponse)
+async def query_documents(
+    request: QueryRequest,
+    service: QueryService = Depends(get_query_service)
+):
     """
     Endpoint to query the RAG system.
     
@@ -15,5 +26,11 @@ async def query_documents():
     2. Call QueryService.query(query).
     3. Return response with sources.
     """
-    # TODO: Call service layer
-    pass
+    try:
+        result = await service.query(request.query)
+        return QueryResponse(
+            response=result["response"],
+            sources=result["sources"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,12 +1,16 @@
 from fastapi import FastAPI
+from src.api.routes import ingest, query
+from dotenv import load_dotenv
+import os
 
-# TODO: Import routers from src.api.routes
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="Legal AI Doc Assistant API")
 
-# TODO: Include routers
-# app.include_router(ingest.router)
-# app.include_router(query.router)
+# Include routers
+app.include_router(ingest.router)
+app.include_router(query.router)
 
 @app.get("/")
 def read_root():

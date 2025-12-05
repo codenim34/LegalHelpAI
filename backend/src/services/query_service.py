@@ -14,16 +14,18 @@ class QueryService:
     Orchestrates the retrieval and generation pipeline.
     """
 
-    def __init__(self, vector_store_repo, embedder):
+    def __init__(self, vector_store_repo, embedder, reranker):
         """
         Initialize with repositories and clients.
 
         Args:
             vector_store_repo: VectorStoreRepository instance
             embedder: EmbeddingService instance
+            reranker: Reranker instance
         """
         self.vector_store_repo = vector_store_repo
         self.embedder = embedder
+        self.reranker = reranker
 
         # Initialize LLM (Gemini)
         if not settings.GOOGLE_API_KEY:
@@ -60,7 +62,8 @@ Answer:
         Main logic for answering queries:
         1. Generate query embedding (Embedder).
         2. Retrieve relevant chunks (VectorStoreRepo).
-        3. Generate answer (LLM).
+        3. Re-rank chunks (Reranker).
+        4. Generate answer (LLM).
 
         Args:
             query_text: User's question
@@ -76,18 +79,21 @@ Answer:
             query_embedding = self.embedder.embed_query(query_text)
 
             # 2. Retrieve relevant chunks using HYBRID SEARCH (BM25 + Vector)
-            logger.debug(f"Performing hybrid search (top_k={settings.TOP_K_RESULTS})")
+            # Retrieve more candidates (2x) for re-ranking
+            initial_k = settings.TOP_K_RESULTS * 2
+            logger.debug(f"Performing hybrid search (top_k={initial_k}, alpha={settings.HYBRID_SEARCH_ALPHA})")
+            
             search_results = self.vector_store_repo.hybrid_search(
                 query_embedding=query_embedding,
                 query_text=query_text,
-                k=settings.TOP_K_RESULTS,
-                alpha=0.7,  # 70% vector, 30% BM25 (tune this!)
+                k=initial_k,
+                alpha=settings.HYBRID_SEARCH_ALPHA,
             )
 
-            documents = search_results["documents"]  # List of text chunks
-            metadatas = search_results["metadatas"]  # List of metadata dicts
+            documents = search_results["documents"]
+            metadatas = search_results["metadatas"]
 
-            if not documents or len(documents) == 0:
+            if not documents:
                 logger.warning("No relevant documents found in vector store")
                 return {
                     "response": "I couldn't find any relevant information in the documents to answer your question.",
@@ -95,25 +101,41 @@ Answer:
                     "context_used": [],
                 }
 
-            logger.debug(f"Found {len(documents)} relevant chunk(s)")
+            # 3. Re-ranking
+            logger.debug(f"Re-ranking {len(documents)} documents")
+            reranked_results = self.reranker.rerank(
+                query=query_text,
+                documents=documents,
+                top_k=settings.TOP_K_RESULTS
+            )
+            
+            # Extract re-ranked docs and metadatas
+            ranked_docs = []
+            ranked_metadatas = []
+            
+            for doc_text, score, original_idx in reranked_results:
+                ranked_docs.append(doc_text)
+                ranked_metadatas.append(metadatas[original_idx])
+            
+            logger.debug(f"Selected top {len(ranked_docs)} documents after re-ranking")
 
             # Format context
-            context = "\n\n".join(documents)
+            context = "\n\n".join(ranked_docs)
 
-            # 3. Generate answer
+            # 4. Generate answer
             logger.debug("Generating LLM response")
             chain = self.prompt | self.llm | StrOutputParser()
             response = await chain.ainvoke({"context": context, "question": query_text})
 
             # Extract unique sources
-            sources = list(set([m.get("filename", "Unknown") for m in metadatas]))
+            sources = list(set([m.get("filename", "Unknown") for m in ranked_metadatas]))
 
             logger.info(f"Query processed successfully. Sources: {sources}")
 
             return {
                 "response": response,
                 "sources": sources,
-                "context_used": documents,  # Optional: for debugging
+                "context_used": ranked_docs,
             }
 
         except Exception as e:

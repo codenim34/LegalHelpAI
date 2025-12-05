@@ -15,16 +15,17 @@ class VectorStoreRepository:
     Abstracts interactions with the Vector Database (ChromaDB).
     """
     
-    def __init__(self, persist_directory=None, collection_name="legal_docs"):
+    def __init__(self, persist_directory: str = None, collection_name: str = None):
         """
         Initialize ChromaDB client and collection.
         
         Args:
-            persist_directory: Directory to persist the database
-            collection_name: Name of the collection
+            persist_directory: Directory to persist the database (defaults to settings.CHROMA_DB_DIR)
+            collection_name: Name of the collection (defaults to settings.VECTOR_STORE_COLLECTION_NAME)
         """
         try:
             persist_directory = persist_directory or app_settings.CHROMA_DB_DIR
+            collection_name = collection_name or app_settings.VECTOR_STORE_COLLECTION_NAME
             logger.info(f"Initializing ChromaDB client at: {persist_directory}")
             
             self.client = chromadb.PersistentClient(path=persist_directory)
@@ -108,7 +109,7 @@ class VectorStoreRepository:
             logger.error(f"Failed to search vector store: {e}")
             raise VectorStoreError(f"Failed to search vector store: {e}")
 
-    def hybrid_search(self, query_embedding: List[float], query_text: str, k: int = 5, alpha: float = 0.7) -> Dict[str, Any]:
+    def hybrid_search(self, query_embedding: List[float], query_text: str, k: int = 5, alpha: float = None) -> Dict[str, Any]:
         """
         Perform hybrid search combining BM25 and vector search using RRF.
         
@@ -116,11 +117,12 @@ class VectorStoreRepository:
             query_embedding: Query embedding vector
             query_text: Original query text for BM25
             k: Number of results to return
-            alpha: Weight for combining scores (0=BM25 only, 1=vector only, default=0.7)
+            alpha: Weight for combining scores (0=BM25 only, 1=vector only, defaults to settings.HYBRID_SEARCH_ALPHA)
             
         Returns:
             Dict with 'documents', 'metadatas', and 'scores'
         """
+        alpha = alpha if alpha is not None else app_settings.HYBRID_SEARCH_ALPHA
         try:
             logger.debug(f"Performing hybrid search (k={k}, alpha={alpha})")
             
@@ -140,10 +142,11 @@ class VectorStoreRepository:
             
             # 3. Reciprocal Rank Fusion (RRF)
             doc_scores = {}
+            rrf_k = app_settings.HYBRID_SEARCH_RRF_K
             
-            # Add vector search scores (using RRF: 1/(rank + 60))
+            # Add vector search scores (using RRF: 1/(rank + k))
             for rank, (doc, metadata) in enumerate(zip(vector_results['documents'][0], vector_results['metadatas'][0])):
-                rrf_score = 1.0 / (rank + 60)
+                rrf_score = 1.0 / (rank + rrf_k)
                 doc_scores[doc] = {
                     'score': alpha * rrf_score,
                     'metadata': metadata
@@ -153,7 +156,7 @@ class VectorStoreRepository:
             bm25_ranked = sorted(enumerate(bm25_scores), key=lambda x: -x[1])
             for rank, (idx, score) in enumerate(bm25_ranked[:k * 2]):
                 doc = self.bm25_docs[idx]
-                rrf_score = 1.0 / (rank + 60)
+                rrf_score = 1.0 / (rank + rrf_k)
                 
                 if doc in doc_scores:
                     doc_scores[doc]['score'] += (1 - alpha) * rrf_score

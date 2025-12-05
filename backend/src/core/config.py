@@ -18,6 +18,7 @@ class Settings:
     
     # Models
     EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
+    RERANKER_MODEL_NAME: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     LLM_MODEL: str = "gemini-2.5-flash"
     LLM_TEMPERATURE: float = 0.3
     
@@ -25,6 +26,13 @@ class Settings:
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     TOP_K_RESULTS: int = 5
+    
+    # Hybrid Search Settings
+    HYBRID_SEARCH_ALPHA: float = 0.7  # 0=BM25 only, 1=vector only
+    HYBRID_SEARCH_RRF_K: int = 60  # RRF constant for reciprocal rank fusion
+    
+    # Vector Store Settings
+    VECTOR_STORE_COLLECTION_NAME: str = "legal_docs"
     
     # Server
     HOST: str = "0.0.0.0"

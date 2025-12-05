@@ -6,6 +6,7 @@ from src.repositories.document_repo import DocumentRepository
 from src.repositories.vector_store_repo import VectorStoreRepository
 from src.utils.parsers import FileParser
 from src.core.chunking import Chunker
+from src.utils.reranker import Reranker
 
 # Singleton instances (cached) for heavy/stateful components
 @lru_cache()
@@ -46,6 +47,14 @@ def get_chunker() -> Chunker:
     """
     return Chunker()
 
+@lru_cache()
+def get_reranker() -> Reranker:
+    """
+    Singleton Reranker.
+    Cross-Encoder model is loaded once and reused.
+    """
+    return Reranker()
+
 # Service instances (lightweight, can be created per request)
 def get_document_service() -> DocumentService:
     """
@@ -67,5 +76,6 @@ def get_query_service() -> QueryService:
     """
     return QueryService(
         vector_store_repo=get_vector_store_repo(),
-        embedder=get_embedding_service()
+        embedder=get_embedding_service(),
+        reranker=get_reranker()
     )

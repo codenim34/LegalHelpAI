@@ -1,19 +1,23 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from typing import List
+from src.core.config import settings
 
 class Chunker:
     """
     Handles text chunking strategies.
     """
     
-    def __init__(self, chunk_size=1000, chunk_overlap=200):
+    def __init__(self, chunk_size=None, chunk_overlap=None):
         """
         Initialize chunker with configurable parameters.
         
         Args:
-            chunk_size: Maximum size of each chunk
-            chunk_overlap: Number of characters to overlap between chunks
+            chunk_size: Maximum size of each chunk (defaults to settings)
+            chunk_overlap: Number of characters to overlap between chunks (defaults to settings)
         """
+        chunk_size = chunk_size or settings.CHUNK_SIZE
+        chunk_overlap = chunk_overlap or settings.CHUNK_OVERLAP
+        
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,

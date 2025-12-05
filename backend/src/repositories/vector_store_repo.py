@@ -2,6 +2,8 @@ import chromadb
 from chromadb.config import Settings
 from typing import List, Dict, Any
 import uuid
+import numpy as np
+from rank_bm25 import BM25Okapi
 from src.core.config import settings as app_settings
 from src.core.logging_config import get_logger
 from src.core.exceptions import VectorStoreError
@@ -31,6 +33,11 @@ class VectorStoreRepository:
                 metadata={"hnsw:space": "cosine"}
             )
             
+            # Initialize BM25 for hybrid search
+            self.bm25_index = None
+            self.bm25_docs = []
+            self.bm25_metadatas = []
+            
             logger.info(f"ChromaDB initialized. Collection: {collection_name}")
         except Exception as e:
             logger.error(f"Failed to initialize ChromaDB: {e}")
@@ -39,6 +46,7 @@ class VectorStoreRepository:
     def add_documents(self, texts: List[str], embeddings: List[List[float]], metadatas: List[Dict[str, Any]] = None):
         """
         Add documents and their embeddings to the vector store.
+        Also builds BM25 index for hybrid search.
         
         Args:
             texts: List of text chunks
@@ -56,7 +64,15 @@ class VectorStoreRepository:
                 metadatas=metadatas if metadatas else [{}] * len(texts)
             )
             
-            logger.info(f"Successfully added {len(texts)} document(s) to vector store")
+            # Add to BM25 index
+            self.bm25_docs.extend(texts)
+            self.bm25_metadatas.extend(metadatas if metadatas else [{}] * len(texts))
+            
+            # Rebuild BM25 index
+            tokenized_corpus = [doc.lower().split() for doc in self.bm25_docs]
+            self.bm25_index = BM25Okapi(tokenized_corpus)
+            
+            logger.info(f"Successfully added {len(texts)} document(s) to vector store and BM25 index")
         except Exception as e:
             logger.error(f"Failed to add documents to vector store: {e}")
             raise VectorStoreError(f"Failed to add documents: {e}")
@@ -91,3 +107,72 @@ class VectorStoreRepository:
         except Exception as e:
             logger.error(f"Failed to search vector store: {e}")
             raise VectorStoreError(f"Failed to search vector store: {e}")
+
+    def hybrid_search(self, query_embedding: List[float], query_text: str, k: int = 5, alpha: float = 0.7) -> Dict[str, Any]:
+        """
+        Perform hybrid search combining BM25 and vector search using RRF.
+        
+        Args:
+            query_embedding: Query embedding vector
+            query_text: Original query text for BM25
+            k: Number of results to return
+            alpha: Weight for combining scores (0=BM25 only, 1=vector only, default=0.7)
+            
+        Returns:
+            Dict with 'documents', 'metadatas', and 'scores'
+        """
+        try:
+            logger.debug(f"Performing hybrid search (k={k}, alpha={alpha})")
+            
+            # 1. Vector search (get top 2k for better coverage)
+            vector_results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=min(k * 2, max(len(self.bm25_docs), 1))
+            )
+            
+            # 2. BM25 search
+            if self.bm25_index and self.bm25_docs:
+                tokenized_query = query_text.lower().split()
+                bm25_scores = self.bm25_index.get_scores(tokenized_query)
+            else:
+                logger.warning("BM25 index not initialized, falling back to vector search only")
+                return self.search(query_embedding, k)
+            
+            # 3. Reciprocal Rank Fusion (RRF)
+            doc_scores = {}
+            
+            # Add vector search scores (using RRF: 1/(rank + 60))
+            for rank, (doc, metadata) in enumerate(zip(vector_results['documents'][0], vector_results['metadatas'][0])):
+                rrf_score = 1.0 / (rank + 60)
+                doc_scores[doc] = {
+                    'score': alpha * rrf_score,
+                    'metadata': metadata
+                }
+            
+            # Add BM25 scores (using RRF)
+            bm25_ranked = sorted(enumerate(bm25_scores), key=lambda x: -x[1])
+            for rank, (idx, score) in enumerate(bm25_ranked[:k * 2]):
+                doc = self.bm25_docs[idx]
+                rrf_score = 1.0 / (rank + 60)
+                
+                if doc in doc_scores:
+                    doc_scores[doc]['score'] += (1 - alpha) * rrf_score
+                else:
+                    doc_scores[doc] = {
+                        'score': (1 - alpha) * rrf_score,
+                        'metadata': self.bm25_metadatas[idx]
+                    }
+            
+            # 4. Sort by combined score and return top k
+            sorted_docs = sorted(doc_scores.items(), key=lambda x: -x[1]['score'])[:k]
+            
+            logger.debug(f"Hybrid search found {len(sorted_docs)} result(s)")
+            
+            return {
+                'documents': [doc for doc, _ in sorted_docs],
+                'metadatas': [data['metadata'] for _, data in sorted_docs],
+                'scores': [data['score'] for _, data in sorted_docs]
+            }
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            raise VectorStoreError(f"Hybrid search failed: {e}")

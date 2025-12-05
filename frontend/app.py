@@ -17,7 +17,11 @@ with st.sidebar:
     # For now, let's assume the backend has the key from .env
     
     st.header("Upload Documents")
-    uploaded_files = st.file_uploader("Upload PDF or DOCX", accept_multiple_files=True, type=["pdf", "docx"])
+    uploaded_files = st.file_uploader(
+        "Upload PDF, DOCX, or Images", 
+        accept_multiple_files=True, 
+        type=["pdf", "docx", "png", "jpg", "jpeg", "webp"]
+    )
     
     if st.button("Process Documents"):
         if uploaded_files:
@@ -26,7 +30,8 @@ with st.sidebar:
                     files = [("files", (file.name, file, file.type)) for file in uploaded_files]
                     response = requests.post(f"{API_URL}/ingest", files=files)
                     if response.status_code == 200:
-                        st.success(response.json()["message"])
+                        data = response.json()
+                        st.success(f"✅ Successfully processed {data['total_files']} file(s): {', '.join(data['files_ingested'])}")
                     else:
                         st.error(f"Error: {response.text}")
                 except Exception as e:
